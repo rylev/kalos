@@ -25,7 +25,7 @@ named!(binary_expression(&[u8]) -> Expression,
         exp2: alt!(literal_expression | enclosed),
         || Expression::BinaryExpression(Box::new(exp1), op, Box::new(exp2))));
 named!(expression(&[u8]) -> Expression,
-       alt_complete!(binary_expression | literal_expression));
+    alt_complete!(binary_expression | literal_expression));
 
 #[derive(PartialEq, Clone, Debug)]
 pub struct Prototype<'a>  {
@@ -63,30 +63,30 @@ named!(divide<Operator>, map!(tag!("/"), |_| Operator::Division));
 named!(operator<Operator>,
     alt!(plus | minus | multiply | divide));
 
-// #[derive(PartialEq, Debug)]
-// enum ParserError<'a> {
-//     NotFinished(&'a str),
-//     FailedParse,
-//     WTF
-// }
-//
-// type ParseResult<'a, T> = Result<T, ParserError<'a>>;
-//
-// fn parse<'a, T: 'a, NomParser>(input: &'a str, parser: NomParser) -> ParseResult<'a, T> where NomParser: Fn(&[u8]) -> IResult<&'a [u8], T> {
-//     match  parser(input.as_bytes()) {
-//         Done(leftover, _) if !leftover.is_empty() => {
-//             // TODO: remove unwrap
-//             Err(ParserError::NotFinished(std::str::from_utf8(leftover).unwrap()))
-//         }
-//         Done(_, result) => Ok(result),
-//         Error(_) => Err(ParserError::FailedParse),
-//         _ => Err(ParserError::WTF),
-//     }
-// }
+#[derive(PartialEq, Debug)]
+pub enum ParserError<'a> {
+    NotFinished(&'a str),
+    FailedParse,
+    WTF
+}
+
+pub type ParseResult<'a, T> = Result<T, ParserError<'a>>;
+
+pub fn parse<'a, T: 'a, NomParser>(input: &'a str, parser: NomParser) -> ParseResult<'a, T> where NomParser: Fn(&'a [u8]) -> IResult<&[u8], T> {
+    match  parser(input.as_bytes()) {
+        Done(leftover, _) if !leftover.is_empty() => {
+            // TODO: remove unwrap
+            Err(ParserError::NotFinished(std::str::from_utf8(leftover).unwrap()))
+        }
+        Done(_, result) => Ok(result),
+        Error(_) => Err(ParserError::FailedParse),
+        _ => Err(ParserError::WTF),
+    }
+}
 
 #[test]
 fn it_parses_math() {
-    let math = "(1/10) +(90*67)";
+    let math = "(1/10)+(90*67)";
     let lhs =
         Box::new(
             Expression::BinaryExpression(
@@ -99,8 +99,9 @@ fn it_parses_math() {
                 Box::new(Expression::Literal(Literal::Float(90.0))),
                 Operator::Multiplication,
                 Box::new(Expression::Literal(Literal::Float(67.0)))));
+
     let ast = Expression::BinaryExpression(lhs, Operator::Addition, rhs);
-    let expected = Done("".as_bytes(), ast);
-    let actual = expression(math.as_bytes());
+    let expected = Ok(ast);
+    let actual = parse(math, expression);
     assert_eq!(expected, actual);
 }
