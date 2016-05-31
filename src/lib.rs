@@ -13,6 +13,7 @@ pub enum Token<'a> {
     OpenBrace,
     ClosedBrace,
     Comma,
+    EndOfLine,
     Identifier(&'a str),
     Number(f64),
     Operator(Operator)
@@ -25,6 +26,17 @@ pub enum Operator {
     Division
 }
 
+impl Operator {
+    fn precedence(&self) -> Precedence {
+        match self {
+            &Operator::Addition => Precedence::AddSub,
+            &Operator::Subtraction => Precedence::AddSub,
+            &Operator::Multiplication => Precedence::MultDiv,
+            &Operator::Division => Precedence::MultDiv
+        }
+    }
+}
+
 named!(def<Token>, map!(chain!(tag!("def") ~ space, || ()), |_| Token::Def));
 named!(delimiter<Token>, map!(char!(';'), |_| Token::Delimiter));
 named!(open_paren<Token>, map!(char!('('), |_| Token::OpenParen));
@@ -35,6 +47,7 @@ named!(comma<Token>, map!(char!(','), |_| Token::Comma));
 named!(f64<f64>, map_res!(map_res!(digit, std::str::from_utf8), |n: &str| n.parse()));
 named!(number<Token>, map!(f64, |n| Token::Number(n)));
 // TODO: improve this to be more strict. e.g. not allow 'HELLO' as identifier
+named!(end_of_line<Token>, map!(alt!(eof | tag!(";") | tag!("\n")), |_| Token::EndOfLine));
 named!(identifier<Token>, map!(map_res!(take_while1!(is_alphabetic), std::str::from_utf8), |s| Token::Identifier(s)));
 named!(plus<Operator>, map!(tag!("+"), |_| Operator::Addition));
 named!(minus<Operator>, map!(tag!("-"), |_| Operator::Subtraction));
@@ -132,6 +145,12 @@ macro_rules! next_token {
         None        => return Err(ParserError::UnexpectedEndOfInput)
     })
 }
+macro_rules! peek_token {
+    ($tokens:ident) => (match $tokens.last() {
+        Some(token) => token,
+        None        => return Err(ParserError::UnexpectedEndOfInput)
+    })
+}
 macro_rules! assert_next_token {
     ($tokens:ident, $token_pattern:pat) => (match next_token!($tokens) {
         token@$token_pattern => token,
@@ -155,15 +174,74 @@ fn unexpected_token<T>(token: Token, expected_tokens: &[&str]) -> ParseResult<T>
 }
 
 pub type ParseResult<T> = Result<T, ParserError>;
-// fn parse<'a>(tokens: &'a mut Vec<Token>) -> ParseResult<Vec<ASTNode<'a>>> {
-//     tokens.reverse();
-//     let mut ast = vec!();
-//     while let Token::Def = next_token!(tokens) {
-//         let func = try_parse!(parse_func(tokens));
-//         ast.push(ASTNode::FuncDeclartion(func));
-//     }
-//     Ok(ast)
-// }
+
+#[derive(Debug, PartialEq)]
+enum Precedence {
+    None,
+    AddSub,
+    MultDiv
+}
+use std::cmp::{Ordering,PartialOrd};
+impl PartialOrd<Precedence> for Precedence {
+     fn partial_cmp(&self, other: &Precedence) -> Option<Ordering> {
+         let order = match (self, other) {
+             (&Precedence::None,    &Precedence::None)    => Ordering::Equal,
+             (&Precedence::AddSub,  &Precedence::AddSub)  => Ordering::Equal,
+             (&Precedence::MultDiv, &Precedence::MultDiv) => Ordering::Equal,
+             (&Precedence::MultDiv, &Precedence::AddSub)  => Ordering::Greater,
+             (&Precedence::AddSub,  &Precedence::MultDiv) => Ordering::Less,
+             (&Precedence::None, _)                       => Ordering::Less,
+             (_, &Precedence::None)                       => Ordering::Greater,
+         };
+         Some(order)
+     }
+}
+
+fn parse_primary<'a>(tokens: &mut Vec<Token>) -> ParseResult<Expression<'a>> {
+    match next_token!(tokens) {
+        Token::Number(n) => Ok(Expression::Value(n)),
+        _                => panic!("no number")
+    }
+}
+
+fn binary_expression<'a>(tokens: &mut Vec<Token>, lhs: &Expression<'a>, mut current_precedence: Precedence) -> ParseResult<Expression<'a>> {
+    let mut result = lhs.clone();
+    loop {
+        let operator = match peek_token!(tokens) {
+            &Token::EndOfLine => break,
+            &Token::Operator(ref op) if op.precedence() < current_precedence => break,
+            &Token::Operator(ref op) => op.clone(),
+            other                    => return unexpected_token(other.clone(), &["operator"])
+        };
+        let _ = next_token!(tokens);
+
+        let mut rhs = try_parse!(parse_primary(tokens));
+
+        let mut eat_more = false;
+        match tokens.last() {
+            Some(&Token::Operator(ref op)) => {
+                if operator.precedence() < op.precedence() {
+                    eat_more = true;
+                }
+            }
+            Some(&Token::EndOfLine) => {},
+            Some(t) => return unexpected_token(t.clone(), &["operator"]),
+            None    => {}
+        }
+        if eat_more {
+            rhs = try_parse!(binary_expression(tokens, &rhs, operator.precedence()));
+        }
+
+        result = match operator {
+            Operator::Addition => Expression::Add(Box::new(result), Box::new(rhs)),
+            Operator::Subtraction => Expression::Subtract(Box::new(result), Box::new(rhs)),
+            Operator::Multiplication => Expression::Multiply(Box::new(result), Box::new(rhs)),
+            Operator::Division => Expression::Divide(Box::new(result), Box::new(rhs)),
+        };
+        current_precedence = operator.precedence();
+    }
+    Ok(result)
+}
 
 fn parse_func<'a>(tokens: &'a mut Vec<Token>) -> ParseResult<Function<'a>> {
     match next_token!(tokens) {
@@ -271,8 +349,8 @@ fn it_handles_malformed_functions() {
 
 #[test]
 fn it_parses_arthimetic() {
-    let math = vec!(
-        Token::Number(1.0),
+    let mut math = vec!(
+        // Token::Number(1.0),
         Token::Operator(Operator::Addition),
         Token::Number(3.0),
         Token::Operator(Operator::Multiplication),
@@ -280,7 +358,9 @@ fn it_parses_arthimetic() {
         Token::Operator(Operator::Addition),
         Token::Number(2.0),
         Token::Operator(Operator::Division),
-        Token::Number(5.0));
+        Token::Number(5.0),
+        Token::EndOfLine);
+    math.reverse();
 
     let divide =
         Expression::Divide(
@@ -297,8 +377,8 @@ fn it_parses_arthimetic() {
 
     let ast = Expression::Add(Box::new(add1), Box::new(divide));
 
-    // let expected = Ok(ast);
-    // assert_eq!(expect, parse(&mut math));
+    let expected = Ok(ast);
+    assert_eq!(expected, binary_expression(&mut math, &Expression::Value(1.0), Precedence::None));
 }
 
 //
