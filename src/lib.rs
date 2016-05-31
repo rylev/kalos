@@ -34,7 +34,8 @@ named!(closed_brace<Token>, map!(char!('}'), |_| Token::ClosedBrace));
 named!(comma<Token>, map!(char!(','), |_| Token::Comma));
 named!(f64<f64>, map_res!(map_res!(digit, std::str::from_utf8), |n: &str| n.parse()));
 named!(number<Token>, map!(f64, |n| Token::Number(n)));
-named!(identifier<Token>, map!(map_res!(take_while!(is_alphabetic), std::str::from_utf8), |s| Token::Identifier(s)));
+// TODO: improve this to be more strict. e.g. not allow 'HELLO' as identifier
+named!(identifier<Token>, map!(map_res!(take_while1!(is_alphabetic), std::str::from_utf8), |s| Token::Identifier(s)));
 named!(plus<Operator>, map!(tag!("+"), |_| Operator::Addition));
 named!(minus<Operator>, map!(tag!("-"), |_| Operator::Subtraction));
 named!(multiply<Operator>, map!(tag!("*"), |_| Operator::Multiplication));
@@ -77,6 +78,10 @@ fn tokenize<'a>(input: &'a str) -> Result<Vec<Token>, String> {
 }
 
 #[derive(PartialEq, Clone, Debug)]
+pub enum ASTNode<'a> {
+    FuncDeclartion(Function<'a>)
+}
+#[derive(PartialEq, Clone, Debug)]
 pub enum Expression<'a> {
     Value(f64),
     Add(Box<Expression<'a>>, Box<Expression<'a>>),
@@ -111,64 +116,77 @@ impl<'a> Function<'a> {
 #[derive(PartialEq, Debug)]
 pub enum ParserError {
     FailedParse(String),
-    EndOfInput,
+    UnexpectedEndOfInput,
 }
 
 #[macro_export]
 macro_rules! try_parse {
     ($expr:expr) => (match $expr {
         Ok(parsed) => parsed,
-        err@Err(_) => return Result::Err(ParserError::EndOfInput) //TODO: Fix
+        Err(err) => return Err(err)
     })
 }
 macro_rules! next_token {
     ($tokens:ident) => (match $tokens.pop() {
         Some(token) => token,
-        None => return Result::Err(ParserError::EndOfInput), //fix
+        None        => return Err(ParserError::UnexpectedEndOfInput)
     })
 }
-macro_rules! take {
+macro_rules! assert_next_token {
     ($tokens:ident, $token_pattern:pat) => (match next_token!($tokens) {
-        $token_pattern => token,
-        _ => return Err(ParserError::EndOfInput), // fix
+        token@$token_pattern => token,
+        other                => return unexpected_token(other, &[]) // TODO: Figure out what to put as the second arg
     })
 }
 
-pub type ParseResult<T> = Result<T, ParserError>;
-fn parse<'a>(tokens: &'a mut Vec<Token>) -> ParseResult<Function<'a>> {
-    tokens.reverse();
-    match next_token!(tokens) {
-        Token::Def => parse_func(tokens),
-        _ => Err(ParserError::EndOfInput)
+fn unexpected_token<T>(token: Token, expected_tokens: &[&str]) -> ParseResult<T> {
+    let mut expected_tokens_string = String::new();
+    for (i, expected_token) in expected_tokens.iter().enumerate() {
+        if i == 0 {
+            expected_tokens_string.push_str(&format!("{:?}", expected_token))
+        } else if i == expected_tokens.len() - 1 {
+            expected_tokens_string.push_str(&format!(", or {:?}", expected_token))
+        } else {
+            expected_tokens_string.push_str(&format!(", {:?}", expected_token))
+        }
     }
+    let message = format!("Expected {}, found {:?}", expected_tokens_string, token);
+    Err(ParserError::FailedParse(message))
 }
+
+pub type ParseResult<T> = Result<T, ParserError>;
+// fn parse<'a>(tokens: &'a mut Vec<Token>) -> ParseResult<Vec<ASTNode<'a>>> {
+//     tokens.reverse();
+//     let mut ast = vec!();
+//     while let Token::Def = next_token!(tokens) {
+//         let func = try_parse!(parse_func(tokens));
+//         ast.push(ASTNode::FuncDeclartion(func));
+//     }
+//     Ok(ast)
+// }
+
 fn parse_func<'a>(tokens: &'a mut Vec<Token>) -> ParseResult<Function<'a>> {
     match next_token!(tokens) {
         Token::Identifier(name) => {
             let args = try_parse!(parse_function_args(tokens));
             Ok(Function::new(name, args, Expression::Value(1.0)))
         },
-        other => Result::Err(ParserError::FailedParse(format!("Expected identifier, found {:?}", other)))
+        other => unexpected_token(other, &["identifier"])
     }
 }
 
-
 fn parse_function_args<'a>(tokens: &'a mut Vec<Token>) -> ParseResult<Vec<&'a str>> {
-    match next_token!(tokens) {
-        Token::OpenParen => {
-            let mut args = vec!();
-            while let Token::Identifier(id) = next_token!(tokens) {
-                args.push(id);
-                match next_token!(tokens) {
-                    Token::ClosedParen => break,
-                    Token::Comma => {},
-                    t => return Err(ParserError::FailedParse(format!("Expected identifier, found {:?}", t))),
-                }
-            }
-            Ok(args)
+    assert_next_token!(tokens, Token::OpenParen);
+    let mut args = vec!();
+    while let Token::Identifier(id) = next_token!(tokens) {
+        args.push(id);
+        match next_token!(tokens) {
+            Token::ClosedParen => break,
+            Token::Comma       => {},
+            other              => return unexpected_token(other, &[")", ","]),
         }
-        other => Result::Err(ParserError::FailedParse(format!("Expected identifier, found {:?}", other)))
     }
+    Ok(args)
 }
 
 
@@ -190,7 +208,7 @@ fn it_tokenizes_functions() {
 }
 
 #[test]
-fn it_tokenizes_functions_with() {
+fn it_tokenizes_functions_with_reserved_words_in_identifier() {
     let func = "def define()";
     let expected = vec!(
         Token::Def,
@@ -201,9 +219,26 @@ fn it_tokenizes_functions_with() {
 }
 
 #[test]
+fn it_tokenizes_arthimetic() {
+    println!("{:?}", identifier("+".as_bytes()));
+    let math = "1 + 3 * 5 + 2 / 5";
+    let expected = vec!(
+        Token::Number(1.0),
+        Token::Operator(Operator::Addition),
+        Token::Number(3.0),
+        Token::Operator(Operator::Multiplication),
+        Token::Number(5.0),
+        Token::Operator(Operator::Addition),
+        Token::Number(2.0),
+        Token::Operator(Operator::Division),
+        Token::Number(5.0));
+    assert_eq!(Ok(expected), tokenize(math));
+}
+
+#[test]
 fn it_parses_functions() {
     let mut func = vec!(
-        Token::Def,
+        // Token::Def,
         Token::Identifier("foo"),
         Token::OpenParen,
         Token::Identifier("bar"),
@@ -213,10 +248,59 @@ fn it_parses_functions() {
         Token::OpenBrace,
         Token::Number(1.0),
         Token::ClosedBrace);
+    func.reverse();
 
     let expected = Function::new("foo", vec!("bar", "baz"), Expression::Value(1.0));
-    assert_eq!(Ok(expected), parse(&mut func));
+    assert_eq!(Ok(expected), parse_func(&mut func));
 }
+
+#[test]
+fn it_handles_malformed_functions() {
+    let mut func = vec!(
+        // Token::Def,
+        Token::Identifier("foo"),
+        Token::OpenParen,
+        Token::Identifier("bar"),
+        Token::OpenBrace,
+        Token::Number(1.0),
+        Token::ClosedBrace);
+    func.reverse();
+
+    assert!(parse_func(&mut func).is_err());
+}
+
+#[test]
+fn it_parses_arthimetic() {
+    let math = vec!(
+        Token::Number(1.0),
+        Token::Operator(Operator::Addition),
+        Token::Number(3.0),
+        Token::Operator(Operator::Multiplication),
+        Token::Number(5.0),
+        Token::Operator(Operator::Addition),
+        Token::Number(2.0),
+        Token::Operator(Operator::Division),
+        Token::Number(5.0));
+
+    let divide =
+        Expression::Divide(
+            Box::new(Expression::Value(2.0)),
+            Box::new(Expression::Value(5.0)));
+    let multiply =
+        Expression::Multiply(
+            Box::new(Expression::Value(3.0)),
+            Box::new(Expression::Value(5.0)));
+    let add1 =
+        Expression::Add(
+            Box::new(Expression::Value(1.0)),
+            Box::new(multiply));
+
+    let ast = Expression::Add(Box::new(add1), Box::new(divide));
+
+    // let expected = Ok(ast);
+    // assert_eq!(expect, parse(&mut math));
+}
+
 //
 // named!(float<Expression>,
 //        chain!(
