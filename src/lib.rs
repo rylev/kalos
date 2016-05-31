@@ -197,19 +197,25 @@ impl PartialOrd<Precedence> for Precedence {
      }
 }
 
+fn parse_expression<'a>(tokens: &mut Vec<Token>) -> ParseResult<Expression<'a>> {
+    let lhs = try_parse!(parse_primary(tokens));
+    parse_binary_expression(tokens, &lhs, Precedence::None)
+}
+
 fn parse_primary<'a>(tokens: &mut Vec<Token>) -> ParseResult<Expression<'a>> {
     match next_token!(tokens) {
         Token::Number(n) => Ok(Expression::Value(n)),
-        _                => panic!("no number")
+        Token::OpenParen => parse_expression(tokens),
+        _ => panic!("no number")
     }
 }
 
-fn binary_expression<'a>(tokens: &mut Vec<Token>, lhs: &Expression<'a>, mut current_precedence: Precedence) -> ParseResult<Expression<'a>> {
+fn parse_binary_expression<'a>(tokens: &mut Vec<Token>, lhs: &Expression<'a>, mut last_precedence: Precedence) -> ParseResult<Expression<'a>> {
     let mut result = lhs.clone();
     loop {
         let operator = match peek_token!(tokens) {
             &Token::EndOfLine => break,
-            &Token::Operator(ref op) if op.precedence() < current_precedence => break,
+            &Token::Operator(ref op) if op.precedence() < last_precedence => break,
             &Token::Operator(ref op) => op.clone(),
             other                    => return unexpected_token(other.clone(), &["operator"])
         };
@@ -226,10 +232,10 @@ fn binary_expression<'a>(tokens: &mut Vec<Token>, lhs: &Expression<'a>, mut curr
             }
             Some(&Token::EndOfLine) => {},
             Some(t) => return unexpected_token(t.clone(), &["operator"]),
-            None    => {}
+            None    => return Ok(result)
         }
         if eat_more {
-            rhs = try_parse!(binary_expression(tokens, &rhs, operator.precedence()));
+            rhs = try_parse!(parse_binary_expression(tokens, &rhs, operator.precedence()));
         }
 
         result = match operator {
@@ -238,7 +244,7 @@ fn binary_expression<'a>(tokens: &mut Vec<Token>, lhs: &Expression<'a>, mut curr
             Operator::Multiplication => Expression::Multiply(Box::new(result), Box::new(rhs)),
             Operator::Division => Expression::Divide(Box::new(result), Box::new(rhs)),
         };
-        current_precedence = operator.precedence();
+        last_precedence = operator.precedence();
     }
     Ok(result)
 }
@@ -350,7 +356,7 @@ fn it_handles_malformed_functions() {
 #[test]
 fn it_parses_arthimetic() {
     let mut math = vec!(
-        // Token::Number(1.0),
+        Token::Number(1.0),
         Token::Operator(Operator::Addition),
         Token::Number(3.0),
         Token::Operator(Operator::Multiplication),
@@ -378,7 +384,7 @@ fn it_parses_arthimetic() {
     let ast = Expression::Add(Box::new(add1), Box::new(divide));
 
     let expected = Ok(ast);
-    assert_eq!(expected, binary_expression(&mut math, &Expression::Value(1.0), Precedence::None));
+    assert_eq!(expected, parse_expression(&mut math));
 }
 
 //
