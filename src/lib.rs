@@ -3,10 +3,14 @@ extern crate nom;
 use nom::*;
 use nom::IResult::*;
 
-
 #[derive(PartialEq, Clone, Debug)]
 pub enum Expression<'a> {
-    Arithmetic(ArithmeticExpression),
+    Value(f64),
+    Add(Box<Expression<'a>>, Box<Expression<'a>>),
+    Subtract(Box<Expression<'a>>, Box<Expression<'a>>),
+    Multiply(Box<Expression<'a>>, Box<Expression<'a>>),
+    Divide(Box<Expression<'a>>, Box<Expression<'a>>),
+    Enclosed(Box<Expression<'a>>),
     Variable(&'a str),
     FunctionCall(&'a str, Vec<Expression<'a>>)
 }
@@ -19,61 +23,51 @@ pub enum Operator {
     Division
 }
 
-#[derive(PartialEq, Clone, Debug)]
-pub enum ArithmeticExpression {
-    Value(f64),
-    Add(Box<ArithmeticExpression>, Box<ArithmeticExpression>),
-    Subtract(Box<ArithmeticExpression>, Box<ArithmeticExpression>),
-    Multiply(Box<ArithmeticExpression>, Box<ArithmeticExpression>),
-    Divide(Box<ArithmeticExpression>, Box<ArithmeticExpression>),
-    Enclosed(Box<ArithmeticExpression>)
-}
-
 named!(f64<f64>, map_res!(map_res!(digit, std::str::from_utf8), |n: &str| n.parse()));
-named!(float<ArithmeticExpression>,
+named!(float<Expression>,
        chain!(
            opt!(space) ~
-           val: map!(f64, ArithmeticExpression::Value) ~
+           val: map!(f64, Expression::Value) ~
            opt!(space),
            || val));
-named!(enclosed_expression<ArithmeticExpression>,
+named!(enclosed_expression<Expression>,
     delimited!(
         chain!(opt!(space) ~ c: char!('(') ~ opt!(space),|| c),
         alt!(low_precedence),
         chain!(opt!(space) ~ c: char!(')') ~ opt!(space),|| c)));
-named!(lhs<ArithmeticExpression>,
+named!(lhs<Expression>,
        alt_complete!(float | enclosed_expression));
 
-named!(multiplication<(Operator, ArithmeticExpression)>,
+named!(multiplication<(Operator, Expression)>,
     chain!(tag!("*") ~ mul: lhs, || (Operator::Multiplication, mul)));
-named!(division<(Operator, ArithmeticExpression)>,
+named!(division<(Operator, Expression)>,
     chain!(tag!("/") ~ div: lhs, || (Operator::Division, div)));
-named!(high_precedence<ArithmeticExpression>, chain!(
+named!(high_precedence<Expression>, chain!(
         initial: lhs ~
         remainder: many0!(alt!(multiplication | division)),
         || fold_exprs(initial, remainder)));
 
-named!(addition<(Operator, ArithmeticExpression)>,
+named!(addition<(Operator, Expression)>,
        chain!(tag!("+") ~ add: high_precedence, || (Operator::Addition, add)));
-named!(subtraction<(Operator, ArithmeticExpression)>,
+named!(subtraction<(Operator, Expression)>,
        chain!(tag!("-") ~ sub: high_precedence, || (Operator::Subtraction, sub)));
-named!(low_precedence<ArithmeticExpression>, chain!(
+named!(low_precedence<Expression>, chain!(
     initial: high_precedence ~
     remainder: many0!(alt!(addition | subtraction)),
     || fold_exprs(initial, remainder)));
 
-fn fold_exprs(initial: ArithmeticExpression, remainder: Vec<(Operator, ArithmeticExpression)>) -> ArithmeticExpression {
+fn fold_exprs<'a>(initial: Expression<'a>, remainder: Vec<(Operator, Expression<'a>)>) -> Expression<'a> {
     remainder.into_iter().fold(initial, |acc, pair| {
         match pair {
-            (Operator::Addition, expr) => ArithmeticExpression::Add(Box::new(acc), Box::new(expr)),
-            (Operator::Subtraction, expr) => ArithmeticExpression::Subtract(Box::new(acc), Box::new(expr)),
-            (Operator::Multiplication, expr) => ArithmeticExpression::Multiply(Box::new(acc), Box::new(expr)),
-            (Operator::Division, expr) => ArithmeticExpression::Divide(Box::new(acc), Box::new(expr)),
+            (Operator::Addition, expr) => Expression::Add(Box::new(acc), Box::new(expr)),
+            (Operator::Subtraction, expr) => Expression::Subtract(Box::new(acc), Box::new(expr)),
+            (Operator::Multiplication, expr) => Expression::Multiply(Box::new(acc), Box::new(expr)),
+            (Operator::Division, expr) => Expression::Divide(Box::new(acc), Box::new(expr)),
         }
     })
 }
 
-named!(arithmetic_expression<Expression>, map!(low_precedence, |exp| Expression::Arithmetic(exp)));
+named!(arithmetic_expression<Expression>, map!(low_precedence, |exp| exp));
 
 named!(expression<Expression>,
     complete!(
@@ -82,6 +76,44 @@ named!(expression<Expression>,
             || exp)));
 
 named!(delimiter, tag!(";"));
+
+named!(identifier<&str>, map_res!(take_while!(is_alphabetic), std::str::from_utf8));
+named!(func_name<&str>, map!(identifier,|n| n));
+
+named!(func_args<Vec<&str> >,
+    chain!(
+        char!('(') ~
+        space? ~
+        args: chain!(
+            first: opt!(identifier) ~
+            mut others: many0!(chain!(char!(',') ~ space? ~ arg: identifier, || arg)),
+            || {
+                first.map(|id| {
+                    let mut args = vec!(id);
+                    args.append(&mut others);
+                    args
+                }).unwrap_or(vec!())
+            }) ~
+        space? ~
+        char!(')'),
+        || args));
+
+named!(func_body<Expression>,
+    chain!(
+        char!('{') ~
+        expr: expression ~
+        char!('}'),
+        || expr));
+
+named!(function<Function>,
+    chain!(
+        tag!("def") ~
+        space ~
+        name: func_name ~
+        args: func_args ~
+        space? ~
+        body: func_body,
+        || Function::new(name, args, body)));
 
 #[derive(PartialEq, Clone, Debug)]
 pub struct Prototype<'a>  {
@@ -93,6 +125,15 @@ pub struct Prototype<'a>  {
 pub struct Function<'a> {
     prototype: Box<Prototype<'a>>,
     body: Box<Expression<'a>>
+}
+
+impl<'a> Function<'a> {
+    fn new(name: &'a str, args: Vec<&'a str>, body: Expression<'a>) -> Function<'a> {
+        Function {
+            prototype: Box::new(Prototype{name: name, args: args}),
+            body: Box::new(body)
+        }
+    }
 }
 
 #[derive(PartialEq, Debug)]
@@ -126,16 +167,16 @@ fn it_parses_binary_arithmetic() {
     let weird = "(1/10 ) +(  90* 67   )";
     let lhs =
         Box::new(
-            ArithmeticExpression::Divide(
-                Box::new(ArithmeticExpression::Value(1.0)),
-                Box::new(ArithmeticExpression::Value(10.0))));
+            Expression::Divide(
+                Box::new(Expression::Value(1.0)),
+                Box::new(Expression::Value(10.0))));
     let rhs =
         Box::new(
-            ArithmeticExpression::Multiply(
-                Box::new(ArithmeticExpression::Value(90.0)),
-                Box::new(ArithmeticExpression::Value(67.0))));
+            Expression::Multiply(
+                Box::new(Expression::Value(90.0)),
+                Box::new(Expression::Value(67.0))));
 
-    let ast = Expression::Arithmetic(ArithmeticExpression::Add(lhs, rhs));
+    let ast = Expression::Add(lhs, rhs);
     let expected = Ok(ast);
 
     assert_eq!(expected, parse(normal, expression));
@@ -147,22 +188,37 @@ fn it_parses_binary_arithmetic() {
 fn it_parses_chained_arithmetic() {
     let normal = "1 + 3 * 5 + 2 / 5";
     let divide =
-        ArithmeticExpression::Divide(
-            Box::new(ArithmeticExpression::Value(2.0)),
-            Box::new(ArithmeticExpression::Value(5.0)));
+        Expression::Divide(
+            Box::new(Expression::Value(2.0)),
+            Box::new(Expression::Value(5.0)));
     let multiply =
-        ArithmeticExpression::Multiply(
-            Box::new(ArithmeticExpression::Value(3.0)),
-            Box::new(ArithmeticExpression::Value(5.0)));
+        Expression::Multiply(
+            Box::new(Expression::Value(3.0)),
+            Box::new(Expression::Value(5.0)));
     let add1 =
-        ArithmeticExpression::Add(
-            Box::new(ArithmeticExpression::Value(1.0)),
+        Expression::Add(
+            Box::new(Expression::Value(1.0)),
             Box::new(multiply));
 
-    let add2 = ArithmeticExpression::Add(Box::new(add1), Box::new(divide));
+    let ast = Expression::Add(Box::new(add1), Box::new(divide));
 
-    let ast = Expression::Arithmetic(add2);
     let expected = Ok(ast);
 
     assert_eq!(expected, parse(normal, expression));
+}
+
+#[test]
+fn it_parses_functions() {
+    let normal = "def foo(bar, baz) { 1 }";
+    let compact = "def foo(bar,baz){1}";
+    let loose = "def foo( bar,    baz   )    {      1       }";
+    let expected = Ok(Function::new("foo", vec!("bar", "baz"), Expression::Value(1.0)));
+    assert_eq!(expected, parse(normal, function));
+    assert_eq!(expected, parse(compact, function));
+    assert_eq!(expected, parse(loose, function));
+
+    let squashed = "deffoo( boo,    bar   ){ 1 } ";
+    assert!(parse(squashed, function).is_err());
+    let squashed = "def foo (boo, bar) { 1 }";
+    assert!(parse(squashed, function).is_err());
 }
