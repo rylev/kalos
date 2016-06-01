@@ -145,6 +145,12 @@ macro_rules! next_token {
         None        => return Err(ParserError::UnexpectedEndOfInput)
     })
 }
+macro_rules! eat_token {
+    ($tokens:ident) => (match $tokens.pop() {
+        Some(token) => {},
+        None        => return Err(ParserError::UnexpectedEndOfInput)
+    })
+}
 macro_rules! peek_token {
     ($tokens:ident) => (match $tokens.last() {
         Some(token) => token,
@@ -205,48 +211,43 @@ fn parse_expression<'a>(tokens: &mut Vec<Token>) -> ParseResult<Expression<'a>> 
 fn parse_primary<'a>(tokens: &mut Vec<Token>) -> ParseResult<Expression<'a>> {
     match next_token!(tokens) {
         Token::Number(n) => Ok(Expression::Value(n)),
-        Token::OpenParen => parse_expression(tokens),
+        Token::OpenParen => {
+            let exp = try_parse!(parse_expression(tokens));
+            assert_next_token!(tokens, Token::ClosedParen);
+            Ok(exp)
+        },
         _ => panic!("no number")
     }
 }
 
-fn parse_binary_expression<'a>(tokens: &mut Vec<Token>, lhs: &Expression<'a>, mut last_precedence: Precedence) -> ParseResult<Expression<'a>> {
-    let mut result = lhs.clone();
+fn parse_binary_expression<'a>(tokens: &mut Vec<Token>, lhs: &Expression<'a>, current_precedence: Precedence) -> ParseResult<Expression<'a>> {
+    let mut lhs = lhs.clone();
     loop {
+        //  * an operator with higher precedence than current precedence, bind to operator
+        //  * otherwise we have gone far enough, our current precedence is the top of current
+        //  subtree, return lhs
         let operator = match peek_token!(tokens) {
-            &Token::EndOfLine => break,
-            &Token::Operator(ref op) if op.precedence() < last_precedence => break,
-            &Token::Operator(ref op) => op.clone(),
-            other                    => return unexpected_token(other.clone(), &["operator"])
+            &Token::Operator(ref next_op) if next_op.precedence() > current_precedence => next_op.clone(),
+            _                                                                          => return Ok(lhs),
         };
-        let _ = next_token!(tokens);
+        // Eat the operator we just peeked at
+        let _ = eat_token!(tokens);
 
+        // parse expression right of operator
         let mut rhs = try_parse!(parse_primary(tokens));
+        // keep going until sub binary expression has an operator that has lower
+        // precedence than "operator"
+        rhs = try_parse!(parse_binary_expression(tokens, &rhs, operator.precedence()));
 
-        let mut eat_more = false;
-        match tokens.last() {
-            Some(&Token::Operator(ref op)) => {
-                if operator.precedence() < op.precedence() {
-                    eat_more = true;
-                }
-            }
-            Some(&Token::EndOfLine) => {},
-            Some(t) => return unexpected_token(t.clone(), &["operator"]),
-            None    => return Ok(result)
-        }
-        if eat_more {
-            rhs = try_parse!(parse_binary_expression(tokens, &rhs, operator.precedence()));
-        }
-
-        result = match operator {
-            Operator::Addition => Expression::Add(Box::new(result), Box::new(rhs)),
-            Operator::Subtraction => Expression::Subtract(Box::new(result), Box::new(rhs)),
-            Operator::Multiplication => Expression::Multiply(Box::new(result), Box::new(rhs)),
-            Operator::Division => Expression::Divide(Box::new(result), Box::new(rhs)),
+        // Put lhs and rhs together to form a new lhs
+        lhs = match operator {
+            Operator::Addition => Expression::Add(Box::new(lhs), Box::new(rhs)),
+            Operator::Subtraction => Expression::Subtract(Box::new(lhs), Box::new(rhs)),
+            Operator::Multiplication => Expression::Multiply(Box::new(lhs), Box::new(rhs)),
+            Operator::Division => Expression::Divide(Box::new(lhs), Box::new(rhs)),
         };
-        last_precedence = operator.precedence();
     }
-    Ok(result)
+    Ok(lhs)
 }
 
 fn parse_func<'a>(tokens: &'a mut Vec<Token>) -> ParseResult<Function<'a>> {
@@ -368,25 +369,60 @@ fn it_parses_arthimetic() {
         Token::EndOfLine);
     math.reverse();
 
-    let divide =
-        Expression::Divide(
-            Box::new(Expression::Value(2.0)),
-            Box::new(Expression::Value(5.0)));
     let multiply =
         Expression::Multiply(
             Box::new(Expression::Value(3.0)),
             Box::new(Expression::Value(5.0)));
-    let add1 =
+    let add =
         Expression::Add(
             Box::new(Expression::Value(1.0)),
             Box::new(multiply));
+    let divide =
+        Expression::Divide(
+            Box::new(Expression::Value(2.0)),
+            Box::new(Expression::Value(5.0)));
 
-    let ast = Expression::Add(Box::new(add1), Box::new(divide));
+    let ast = Expression::Add(Box::new(add), Box::new(divide));
 
     let expected = Ok(ast);
     assert_eq!(expected, parse_expression(&mut math));
 }
 
+#[test]
+fn it_parses_grouped_arthimetic() {
+    let mut math = vec!(
+        Token::OpenParen,
+        Token::Number(1.0),
+        Token::Operator(Operator::Addition),
+        Token::Number(3.0),
+        Token::ClosedParen,
+        Token::Operator(Operator::Multiplication),
+        Token::Number(5.0),
+        Token::Operator(Operator::Addition),
+        Token::Number(2.0),
+        Token::Operator(Operator::Division),
+        Token::Number(5.0),
+        Token::EndOfLine);
+    math.reverse();
+
+    let add1 =
+        Expression::Add(
+            Box::new(Expression::Value(1.0)),
+            Box::new(Expression::Value(3.0)));
+    let multiply =
+        Expression::Multiply(
+            Box::new(add1),
+            Box::new(Expression::Value(5.0)));
+    let divide =
+        Expression::Divide(
+            Box::new(Expression::Value(2.0)),
+            Box::new(Expression::Value(5.0)));
+
+    let ast = Expression::Add(Box::new(multiply), Box::new(divide));
+
+    let expected = Ok(ast);
+    assert_eq!(expected, parse_expression(&mut math));
+}
 //
 // named!(float<Expression>,
 //        chain!(
