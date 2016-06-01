@@ -147,7 +147,7 @@ macro_rules! next_token {
 }
 macro_rules! eat_token {
     ($tokens:ident) => (match $tokens.pop() {
-        Some(token) => {},
+        Some(_) => {},
         None        => return Err(ParserError::UnexpectedEndOfInput)
     })
 }
@@ -203,12 +203,12 @@ impl PartialOrd<Precedence> for Precedence {
      }
 }
 
-fn parse_expression<'a>(tokens: &mut Vec<Token>) -> ParseResult<Expression<'a>> {
+fn parse_expression<'a>(tokens: &mut Vec<Token<'a>>) -> ParseResult<Expression<'a>> {
     let lhs = try_parse!(parse_primary(tokens));
     parse_binary_expression(tokens, &lhs, Precedence::None)
 }
 
-fn parse_primary<'a>(tokens: &mut Vec<Token>) -> ParseResult<Expression<'a>> {
+fn parse_primary<'a>(tokens: &mut Vec<Token<'a>>) -> ParseResult<Expression<'a>> {
     match next_token!(tokens) {
         Token::Number(n) => Ok(Expression::Value(n)),
         Token::OpenParen => {
@@ -216,11 +216,37 @@ fn parse_primary<'a>(tokens: &mut Vec<Token>) -> ParseResult<Expression<'a>> {
             assert_next_token!(tokens, Token::ClosedParen);
             Ok(exp)
         },
-        _ => panic!("no number")
+        Token::Identifier(name) => {
+            if let &Token::OpenParen = peek_token!(tokens) {
+                eat_token!(tokens);
+                let args = try_parse!(parse_function_call_args(tokens));
+                Ok(Expression::FunctionCall(name, args))
+            } else {
+                Ok(Expression::Variable(name))
+            }
+        }
+        other => unexpected_token(other, &["number", "(", "identifier"])
     }
 }
 
-fn parse_binary_expression<'a>(tokens: &mut Vec<Token>, lhs: &Expression<'a>, current_precedence: Precedence) -> ParseResult<Expression<'a>> {
+fn parse_function_call_args<'a>(tokens: &mut Vec<Token<'a>>) -> ParseResult<Vec<Expression<'a>>> {
+    let mut args = vec!();
+    if let &Token::ClosedParen = peek_token!(tokens) {
+        eat_token!(tokens);
+        Ok(args)
+    } else {
+        loop {
+            args.push(try_parse!(parse_expression(tokens)));
+            match next_token!(tokens) {
+                Token::Comma       => continue,
+                Token::ClosedParen => return Ok(args),
+                other              => return unexpected_token(other, &[",", ")"])
+            }
+        }
+    }
+}
+
+fn parse_binary_expression<'a>(tokens: &mut Vec<Token<'a>>, lhs: &Expression<'a>, current_precedence: Precedence) -> ParseResult<Expression<'a>> {
     let mut lhs = lhs.clone();
     loop {
         //  * an operator with higher precedence than current precedence, bind to operator
@@ -423,194 +449,34 @@ fn it_parses_grouped_arthimetic() {
     let expected = Ok(ast);
     assert_eq!(expected, parse_expression(&mut math));
 }
-//
-// named!(float<Expression>,
-//        chain!(
-//            opt!(space) ~
-//            val: map!(f64, Expression::Value) ~
-//            opt!(space),
-//            || val));
-// named!(enclosed_expression<Expression>,
-//     delimited!(
-//         chain!(opt!(space) ~ c: char!('(') ~ opt!(space),|| c),
-//         alt!(low_precedence),
-//         chain!(opt!(space) ~ c: char!(')') ~ opt!(space),|| c)));
-// named!(lhs<Expression>,
-//        alt_complete!(float | enclosed_expression));
-//
-// named!(multiplication<(Operator, Expression)>,
-//     chain!(tag!("*") ~ mul: lhs, || (Operator::Multiplication, mul)));
-// named!(division<(Operator, Expression)>,
-//     chain!(tag!("/") ~ div: lhs, || (Operator::Division, div)));
-// named!(high_precedence<Expression>, chain!(
-//         initial: lhs ~
-//         remainder: many0!(alt!(multiplication | division)),
-//         || fold_exprs(initial, remainder)));
-//
-// named!(addition<(Operator, Expression)>,
-//        chain!(tag!("+") ~ add: high_precedence, || (Operator::Addition, add)));
-// named!(subtraction<(Operator, Expression)>,
-//        chain!(tag!("-") ~ sub: high_precedence, || (Operator::Subtraction, sub)));
-// named!(low_precedence<Expression>, chain!(
-//     initial: high_precedence ~
-//     remainder: many0!(alt!(addition | subtraction)),
-//     || fold_exprs(initial, remainder)));
-//
-// fn fold_exprs<'a>(initial: Expression<'a>, remainder: Vec<(Operator, Expression<'a>)>) -> Expression<'a> {
-//     remainder.into_iter().fold(initial, |acc, pair| {
-//         match pair {
-//             (Operator::Addition, expr) => Expression::Add(Box::new(acc), Box::new(expr)),
-//             (Operator::Subtraction, expr) => Expression::Subtract(Box::new(acc), Box::new(expr)),
-//             (Operator::Multiplication, expr) => Expression::Multiply(Box::new(acc), Box::new(expr)),
-//             (Operator::Division, expr) => Expression::Divide(Box::new(acc), Box::new(expr)),
-//         }
-//     })
-// }
-//
-// named!(arithmetic_expression<Expression>, map!(low_precedence, |exp| exp));
-//
-// named!(expression<Expression>,
-//     complete!(
-//         chain!(
-//             exp: alt_complete!(arithmetic_expression),
-//             || exp)));
-//
-//
-// named!(func_name<&str>, map!(identifier,|n| n));
-//
-// named!(func_args<Vec<&str> >,
-//     chain!(
-//         char!('(') ~
-//         space? ~
-//         args: chain!(
-//             first: opt!(identifier) ~
-//             mut others: many0!(chain!(char!(',') ~ space? ~ arg: identifier, || arg)),
-//             || {
-//                 first.map(|id| {
-//                     let mut args = vec!(id);
-//                     args.append(&mut others);
-//                     args
-//                 }).unwrap_or(vec!())
-//             }) ~
-//         space? ~
-//         char!(')'),
-//         || args));
-//
-// named!(func_body<Expression>,
-//     chain!(
-//         char!('{') ~
-//         expr: expression ~
-//         char!('}'),
-//         || expr));
-//
-// named!(function<Function>,
-//     chain!(
-//         tag!("def") ~
-//         space ~
-//         name: func_name ~
-//         args: func_args ~
-//         space? ~
-//         body: func_body,
-//         || Function::new(name, args, body)));
-//
-//
-// #[derive(PartialEq, Debug)]
-// pub enum ParserError<'a> {
-//     NotFinished(&'a str),
-//     FailedParse(&'a str),
-//     WTF
-// }
-//
-// pub type ParseResult<'a, T> = Result<T, ParserError<'a>>;
-//
-// pub fn parse<'a, T: 'a>(input: &'a str) -> ParseResult<'a, T> {
-//     match  parser(input.as_bytes()) {
-//         Done(leftover, _) if !leftover.is_empty() => {
-//             // TODO: remove unwrap
-//             Err(ParserError::NotFinished(std::str::from_utf8(leftover).unwrap()))
-//         }
-//         Done(_, result) => Ok(result),
-//         Error(Err::Position(t, bytes)) => {
-//             println!("{:?}", t);
-//             Err(ParserError::FailedParse(std::str::from_utf8(bytes).unwrap()))
-//         },
-//         _ => Err(ParserError::WTF),
-//     }
-// }
-// pub fn parse<'a, T: 'a, NomParser>(input: &'a str, parser: NomParser) -> ParseResult<'a, T> where NomParser: Fn(&'a [u8]) -> IResult<&[u8], T> {
-//     match  parser(input.as_bytes()) {
-//         Done(leftover, _) if !leftover.is_empty() => {
-//             // TODO: remove unwrap
-//             Err(ParserError::NotFinished(std::str::from_utf8(leftover).unwrap()))
-//         }
-//         Done(_, result) => Ok(result),
-//         Error(Err::Position(t, bytes)) => {
-//             println!("{:?}", t);
-//             Err(ParserError::FailedParse(std::str::from_utf8(bytes).unwrap()))
-//         },
-//         _ => Err(ParserError::WTF),
-//     }
-// }
-//
-// #[test]
-// fn it_parses_binary_arithmetic() {
-//     let normal = "(1 / 10) + (90 * 67)";
-//     let condensed = "(1/10)+(90*67)";
-//     let weird = "(1/10 ) +(  90* 67   )";
-//     let lhs =
-//         Box::new(
-//             Expression::Divide(
-//                 Box::new(Expression::Value(1.0)),
-//                 Box::new(Expression::Value(10.0))));
-//     let rhs =
-//         Box::new(
-//             Expression::Multiply(
-//                 Box::new(Expression::Value(90.0)),
-//                 Box::new(Expression::Value(67.0))));
-//
-//     let ast = Expression::Add(lhs, rhs);
-//     let expected = Ok(ast);
-//
-//     assert_eq!(expected, parse(normal, expression));
-//     assert_eq!(expected, parse(condensed, expression));
-//     assert_eq!(expected, parse(weird, expression));
-// }
-//
-// #[test]
-// fn it_parses_chained_arithmetic() {
-//     let normal = "1 + 3 * 5 + 2 / 5";
-//     let divide =
-//         Expression::Divide(
-//             Box::new(Expression::Value(2.0)),
-//             Box::new(Expression::Value(5.0)));
-//     let multiply =
-//         Expression::Multiply(
-//             Box::new(Expression::Value(3.0)),
-//             Box::new(Expression::Value(5.0)));
-//     let add1 =
-//         Expression::Add(
-//             Box::new(Expression::Value(1.0)),
-//             Box::new(multiply));
-//
-//     let ast = Expression::Add(Box::new(add1), Box::new(divide));
-//
-//     let expected = Ok(ast);
-//
-//     assert_eq!(expected, parse(normal, expression));
-// }
-//
-// #[test]
-// fn it_parses_functions() {
-//     let normal = "def foo(bar, baz) { 1 }";
-//     let compact = "def foo(bar,baz){1}";
-//     let loose = "def foo( bar,    baz   )    {      1       }";
-//     let expected = Ok(Function::new("foo", vec!("bar", "baz"), Expression::Value(1.0)));
-//     assert_eq!(expected, parse(normal, function));
-//     assert_eq!(expected, parse(compact, function));
-//     assert_eq!(expected, parse(loose, function));
-//
-//     let squashed = "deffoo( boo,    bar   ){ 1 } ";
-//     assert!(parse(squashed, function).is_err());
-//     let squashed = "def foo (boo, bar) { 1 }";
-//     assert!(parse(squashed, function).is_err());
-// }
+
+#[test]
+fn it_parses_function_calls() {
+    let mut call = vec!(
+        Token::Identifier("foo"),
+        Token::OpenParen,
+        Token::Number(1.0),
+        Token::Operator(Operator::Addition),
+        Token::Number(3.0),
+        Token::Comma,
+        Token::Number(5.0),
+        Token::Operator(Operator::Multiplication),
+        Token::Number(2.0),
+        Token::ClosedParen,
+        Token::EndOfLine);
+    call.reverse();
+
+    let add =
+        Expression::Add(
+            Box::new(Expression::Value(1.0)),
+            Box::new(Expression::Value(3.0)));
+    let multiply =
+        Expression::Multiply(
+            Box::new(Expression::Value(5.0)),
+            Box::new(Expression::Value(2.0)));
+
+    let ast = Expression::FunctionCall("foo", vec!(add, multiply));
+
+    let expected = Ok(ast);
+    assert_eq!(expected, parse_expression(&mut call));
+}
