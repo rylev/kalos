@@ -3,6 +3,38 @@ extern crate nom;
 use nom::*;
 use nom::IResult::*;
 
+#[macro_export]
+macro_rules! try_parse {
+    ($expr:expr) => (match $expr {
+        Ok(parsed) => parsed,
+        Err(err) => return Err(err)
+    })
+}
+macro_rules! next_token {
+    ($tokens:ident) => (match $tokens.pop() {
+        Some(token) => token,
+        None        => return Err(ParserError::UnexpectedEndOfInput)
+    })
+}
+macro_rules! eat_token {
+    ($tokens:ident) => (match $tokens.pop() {
+        Some(_) => {},
+        None        => return Err(ParserError::UnexpectedEndOfInput)
+    })
+}
+macro_rules! peek_token {
+    ($tokens:ident) => (match $tokens.last() {
+        Some(token) => token,
+        None        => return Err(ParserError::UnexpectedEndOfInput)
+    })
+}
+macro_rules! assert_next_token {
+    ($tokens:ident, $token_pattern:pat) => (match next_token!($tokens) {
+        token@$token_pattern => token,
+        other                => return unexpected_token(other, &[]) // TODO: Figure out what to put as the second arg
+    })
+}
+
 #[derive(PartialEq, Clone, Debug)]
 pub enum Token<'a> {
     Def,
@@ -74,6 +106,25 @@ named!(token<Token>,
 
 named!(tokens<Vec<Token> >, many0!(token));
 
+pub fn parse<'a>(input: &'a str) -> ParseResult<Vec<ASTNode>> {
+    match tokenize(input) {
+        Ok(mut tokens) => {
+            tokens.reverse();
+
+            let mut nodes = vec!();
+            loop  {
+                let func = try_parse!(parse_function_definition(&mut tokens));
+                nodes.push(ASTNode::FuncDeclartion(func));
+                if tokens.is_empty() {
+                    break
+                }
+            }
+            Ok(nodes)
+        }
+        Err(_) => Err(ParserError::UnexpectedEndOfInput) // FIX ME
+    }
+}
+
 pub fn tokenize<'a>(input: &'a str) -> Result<Vec<Token>, String> {
     match tokens(input.as_bytes()) {
         Done(leftover, _) if !leftover.is_empty() => {
@@ -82,7 +133,6 @@ pub fn tokenize<'a>(input: &'a str) -> Result<Vec<Token>, String> {
         }
         Done(_, result) => Ok(result),
         Error(Err::Position(parser, unparseable)) => {
-            println!("Could not parse at {:?}", parser);
             // TODO: remove unwrap
             Err(format!("Could not parse '{}'", std::str::from_utf8(unparseable).unwrap()))
         }
@@ -139,37 +189,6 @@ pub enum ParserError {
     UnexpectedEndOfInput,
 }
 
-#[macro_export]
-macro_rules! try_parse {
-    ($expr:expr) => (match $expr {
-        Ok(parsed) => parsed,
-        Err(err) => return Err(err)
-    })
-}
-macro_rules! next_token {
-    ($tokens:ident) => (match $tokens.pop() {
-        Some(token) => token,
-        None        => return Err(ParserError::UnexpectedEndOfInput)
-    })
-}
-macro_rules! eat_token {
-    ($tokens:ident) => (match $tokens.pop() {
-        Some(_) => {},
-        None        => return Err(ParserError::UnexpectedEndOfInput)
-    })
-}
-macro_rules! peek_token {
-    ($tokens:ident) => (match $tokens.last() {
-        Some(token) => token,
-        None        => return Err(ParserError::UnexpectedEndOfInput)
-    })
-}
-macro_rules! assert_next_token {
-    ($tokens:ident, $token_pattern:pat) => (match next_token!($tokens) {
-        token@$token_pattern => token,
-        other                => return unexpected_token(other, &[]) // TODO: Figure out what to put as the second arg
-    })
-}
 
 fn unexpected_token<T>(token: Token, expected_tokens: &[&str]) -> ParseResult<T> {
     let mut expected_tokens_string = String::new();
@@ -291,12 +310,14 @@ fn parse_binary_expression<'a>(tokens: &mut Vec<Token<'a>>, lhs: &Expression<'a>
 }
 
 pub fn parse_function_definition<'a>(tokens: &mut Vec<Token<'a>>) -> ParseResult<Function<'a>> {
+    assert_next_token!(tokens, Token::Def);
     match next_token!(tokens) {
         Token::Identifier(name) => {
             let args = try_parse!(parse_function_definition_args(tokens));
             assert_next_token!(tokens, Token::OpenBrace);
             // TODO: multiline
             let expression = try_parse!(parse_expression(tokens));
+            assert_next_token!(tokens, Token::ClosedBrace);
             Ok(Function::new(name, args, expression))
         },
         other => unexpected_token(other, &["identifier"])
@@ -347,7 +368,6 @@ fn it_tokenizes_functions_with_reserved_words_in_identifier() {
 
 #[test]
 fn it_tokenizes_arthimetic() {
-    println!("{:?}", identifier("+".as_bytes()));
     let math = "1 + 3 * 5 + 2 / 5";
     let expected = vec!(
         Token::Number(1.0),
@@ -365,7 +385,7 @@ fn it_tokenizes_arthimetic() {
 #[test]
 fn it_parses_functions() {
     let mut func = vec!(
-        // Token::Def,
+        Token::Def,
         Token::Identifier("foo"),
         Token::OpenParen,
         Token::Identifier("bar"),
@@ -384,7 +404,7 @@ fn it_parses_functions() {
 #[test]
 fn it_handles_malformed_functions() {
     let mut func = vec!(
-        // Token::Def,
+        Token::Def,
         Token::Identifier("foo"),
         Token::OpenParen,
         Token::Identifier("bar"),
