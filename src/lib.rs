@@ -47,7 +47,7 @@ named!(comma<Token>, map!(char!(','), |_| Token::Comma));
 named!(f64<f64>, map_res!(map_res!(digit, std::str::from_utf8), |n: &str| n.parse()));
 named!(number<Token>, map!(f64, |n| Token::Number(n)));
 // TODO: improve this to be more strict. e.g. not allow 'HELLO' as identifier
-named!(end_of_line<Token>, map!(alt!(eof | tag!(";") | tag!("\n")), |_| Token::EndOfLine));
+// named!(end_of_line<Token>, map!(alt!(eof | tag!(";") | tag!("\n")), |_| Token::EndOfLine));
 named!(identifier<Token>, map!(map_res!(take_while1!(is_alphabetic), std::str::from_utf8), |s| Token::Identifier(s)));
 named!(plus<Operator>, map!(tag!("+"), |_| Operator::Addition));
 named!(minus<Operator>, map!(tag!("-"), |_| Operator::Subtraction));
@@ -74,7 +74,7 @@ named!(token<Token>,
 
 named!(tokens<Vec<Token> >, many0!(token));
 
-fn tokenize<'a>(input: &'a str) -> Result<Vec<Token>, String> {
+pub fn tokenize<'a>(input: &'a str) -> Result<Vec<Token>, String> {
     match tokens(input.as_bytes()) {
         Done(leftover, _) if !leftover.is_empty() => {
             // TODO: remove unwrap
@@ -210,30 +210,38 @@ impl PartialOrd<Precedence> for Precedence {
      }
 }
 
-fn parse_expression<'a>(tokens: &mut Vec<Token<'a>>) -> ParseResult<Expression<'a>> {
+pub fn parse_expression<'a>(tokens: &mut Vec<Token<'a>>) -> ParseResult<Expression<'a>> {
     let lhs = try_parse!(parse_primary(tokens));
     parse_binary_expression(tokens, &lhs, Precedence::None)
 }
 
 fn parse_primary<'a>(tokens: &mut Vec<Token<'a>>) -> ParseResult<Expression<'a>> {
     match next_token!(tokens) {
-        Token::Number(n) => Ok(Expression::Value(n)),
-        Token::OpenParen => {
-            let exp = try_parse!(parse_expression(tokens));
-            assert_next_token!(tokens, Token::ClosedParen);
-            Ok(exp)
-        },
-        Token::Identifier(name) => {
-            if let &Token::OpenParen = peek_token!(tokens) {
-                eat_token!(tokens);
-                let args = try_parse!(parse_function_call_args(tokens));
-                Ok(Expression::FunctionCall(name, args))
-            } else {
-                Ok(Expression::Variable(name))
-            }
-        }
+        Token::Number(n) => parse_number_expression(tokens, n),
+        Token::OpenParen => parse_paren_expression(tokens),
+        Token::Identifier(name) => parse_identifier_expression(tokens, name),
         other => unexpected_token(other, &["number", "(", "identifier"])
     }
+}
+
+fn parse_identifier_expression<'a>(tokens: &mut Vec<Token<'a>>, name: &'a str) -> ParseResult<Expression<'a>> {
+    if let &Token::OpenParen = peek_token!(tokens) {
+        eat_token!(tokens);
+        let args = try_parse!(parse_function_call_args(tokens));
+        Ok(Expression::FunctionCall(name, args))
+    } else {
+        Ok(Expression::Variable(name))
+    }
+}
+
+fn parse_number_expression<'a>(_tokens: &mut Vec<Token<'a>>, n: f64) -> ParseResult<Expression<'a>> {
+    Ok(Expression::Value(n))
+}
+
+fn parse_paren_expression<'a>(tokens: &mut Vec<Token<'a>>) -> ParseResult<Expression<'a>> {
+    let exp = try_parse!(parse_expression(tokens));
+    assert_next_token!(tokens, Token::ClosedParen);
+    Ok(exp)
 }
 
 fn parse_function_call_args<'a>(tokens: &mut Vec<Token<'a>>) -> ParseResult<Vec<Expression<'a>>> {
@@ -280,10 +288,9 @@ fn parse_binary_expression<'a>(tokens: &mut Vec<Token<'a>>, lhs: &Expression<'a>
             Operator::Division => Expression::Divide(Box::new(lhs), Box::new(rhs)),
         };
     }
-    Ok(lhs)
 }
 
-fn parse_function_definition<'a>(tokens: &mut Vec<Token<'a>>) -> ParseResult<Function<'a>> {
+pub fn parse_function_definition<'a>(tokens: &mut Vec<Token<'a>>) -> ParseResult<Function<'a>> {
     match next_token!(tokens) {
         Token::Identifier(name) => {
             let args = try_parse!(parse_function_definition_args(tokens));
