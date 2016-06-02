@@ -1,4 +1,3 @@
-
 use lexer;
 use lexer::{Token,Operator,Precedence};
 
@@ -34,39 +33,9 @@ macro_rules! assert_next_token {
     })
 }
 
-pub fn parse<'a>(input: &'a str) -> ParseResult<Vec<ASTNode>> {
-    match lexer::tokenize(input) {
-        Ok(mut tokens) => {
-            tokens.reverse();
-
-            let mut nodes = vec!();
-            loop  {
-                let func = try_parse!(parse_function_definition(&mut tokens));
-                nodes.push(ASTNode::FuncDeclartion(func));
-                if tokens.is_empty() {
-                    break
-                }
-            }
-            Ok(nodes)
-        }
-        Err(_) => Err(ParserError::UnexpectedEndOfInput) // FIX ME
-    }
-}
-
 #[derive(PartialEq, Clone, Debug)]
 pub enum ASTNode<'a> {
     FuncDeclartion(Function<'a>)
-}
-
-#[derive(PartialEq, Clone, Debug)]
-pub enum Expression<'a> {
-    Value(f64),
-    Add(Box<Expression<'a>>, Box<Expression<'a>>),
-    Subtract(Box<Expression<'a>>, Box<Expression<'a>>),
-    Multiply(Box<Expression<'a>>, Box<Expression<'a>>),
-    Divide(Box<Expression<'a>>, Box<Expression<'a>>),
-    Variable(&'a str),
-    FunctionCall(&'a str, Vec<Expression<'a>>)
 }
 
 #[derive(PartialEq, Clone, Debug)]
@@ -96,12 +65,43 @@ impl<'a> Function<'a> {
     }
 }
 
+#[derive(PartialEq, Clone, Debug)]
+pub enum Expression<'a> {
+    Value(f64),
+    Add(Box<Expression<'a>>, Box<Expression<'a>>),
+    Subtract(Box<Expression<'a>>, Box<Expression<'a>>),
+    Multiply(Box<Expression<'a>>, Box<Expression<'a>>),
+    Divide(Box<Expression<'a>>, Box<Expression<'a>>),
+    Variable(&'a str),
+    FunctionCall(&'a str, Vec<Expression<'a>>)
+}
+
+pub type ParseResult<T> = Result<T, ParserError>;
+
 #[derive(PartialEq, Debug)]
 pub enum ParserError {
     UnexpectedToken(String),
     UnexpectedEndOfInput,
 }
 
+pub fn parse<'a>(input: &'a str) -> ParseResult<Vec<ASTNode>> {
+    match lexer::tokenize(input) {
+        Ok(mut tokens) => {
+            tokens.reverse();
+
+            let mut nodes = vec!();
+            loop  {
+                let func = try_parse!(parse_function_definition(&mut tokens));
+                nodes.push(ASTNode::FuncDeclartion(func));
+                if tokens.is_empty() {
+                    break
+                }
+            }
+            Ok(nodes)
+        }
+        Err(_) => Err(ParserError::UnexpectedEndOfInput) // FIX ME
+    }
+}
 
 fn unexpected_token<T>(token: Token, expected_tokens: &[&str]) -> ParseResult<T> {
     let mut expected_tokens_string = String::new();
@@ -118,7 +118,34 @@ fn unexpected_token<T>(token: Token, expected_tokens: &[&str]) -> ParseResult<T>
     Err(ParserError::UnexpectedToken(message))
 }
 
-pub type ParseResult<T> = Result<T, ParserError>;
+pub fn parse_function_definition<'a>(tokens: &mut Vec<Token<'a>>) -> ParseResult<Function<'a>> {
+    assert_next_token!(tokens, Token::Def);
+    match next_token!(tokens) {
+        Token::Identifier(name) => {
+            let args = try_parse!(parse_function_definition_args(tokens));
+            assert_next_token!(tokens, Token::OpenBrace);
+            // TODO: multiline
+            let expression = try_parse!(parse_expression(tokens));
+            assert_next_token!(tokens, Token::ClosedBrace);
+            Ok(Function::new(name, args, expression))
+        },
+        other => unexpected_token(other, &["identifier"])
+    }
+}
+
+fn parse_function_definition_args<'a>(tokens: &mut Vec<Token<'a>>) -> ParseResult<Vec<&'a str>> {
+    assert_next_token!(tokens, Token::OpenParen);
+    let mut args = vec!();
+    while let Token::Identifier(id) = next_token!(tokens) {
+        args.push(id);
+        match next_token!(tokens) {
+            Token::ClosedParen => break,
+            Token::Comma       => {},
+            other              => return unexpected_token(other, &[")", ","]),
+        }
+    }
+    Ok(args)
+}
 
 pub fn parse_expression<'a>(tokens: &mut Vec<Token<'a>>) -> ParseResult<Expression<'a>> {
     let lhs = try_parse!(parse_primary(tokens));
@@ -134,15 +161,6 @@ fn parse_primary<'a>(tokens: &mut Vec<Token<'a>>) -> ParseResult<Expression<'a>>
     }
 }
 
-fn parse_identifier_expression<'a>(tokens: &mut Vec<Token<'a>>, name: &'a str) -> ParseResult<Expression<'a>> {
-    if let &Token::OpenParen = peek_token!(tokens) {
-        eat_token!(tokens);
-        let args = try_parse!(parse_function_call_args(tokens));
-        Ok(Expression::FunctionCall(name, args))
-    } else {
-        Ok(Expression::Variable(name))
-    }
-}
 
 fn parse_number_expression<'a>(_tokens: &mut Vec<Token<'a>>, n: f64) -> ParseResult<Expression<'a>> {
     Ok(Expression::Value(n))
@@ -152,6 +170,16 @@ fn parse_paren_expression<'a>(tokens: &mut Vec<Token<'a>>) -> ParseResult<Expres
     let exp = try_parse!(parse_expression(tokens));
     assert_next_token!(tokens, Token::ClosedParen);
     Ok(exp)
+}
+
+fn parse_identifier_expression<'a>(tokens: &mut Vec<Token<'a>>, name: &'a str) -> ParseResult<Expression<'a>> {
+    if let &Token::OpenParen = peek_token!(tokens) {
+        eat_token!(tokens);
+        let args = try_parse!(parse_function_call_args(tokens));
+        Ok(Expression::FunctionCall(name, args))
+    } else {
+        Ok(Expression::Variable(name))
+    }
 }
 
 fn parse_function_call_args<'a>(tokens: &mut Vec<Token<'a>>) -> ParseResult<Vec<Expression<'a>>> {
@@ -198,35 +226,6 @@ fn parse_binary_expression<'a>(tokens: &mut Vec<Token<'a>>, lhs: &Expression<'a>
             Operator::Division => Expression::Divide(Box::new(lhs), Box::new(rhs)),
         };
     }
-}
-
-pub fn parse_function_definition<'a>(tokens: &mut Vec<Token<'a>>) -> ParseResult<Function<'a>> {
-    assert_next_token!(tokens, Token::Def);
-    match next_token!(tokens) {
-        Token::Identifier(name) => {
-            let args = try_parse!(parse_function_definition_args(tokens));
-            assert_next_token!(tokens, Token::OpenBrace);
-            // TODO: multiline
-            let expression = try_parse!(parse_expression(tokens));
-            assert_next_token!(tokens, Token::ClosedBrace);
-            Ok(Function::new(name, args, expression))
-        },
-        other => unexpected_token(other, &["identifier"])
-    }
-}
-
-fn parse_function_definition_args<'a>(tokens: &mut Vec<Token<'a>>) -> ParseResult<Vec<&'a str>> {
-    assert_next_token!(tokens, Token::OpenParen);
-    let mut args = vec!();
-    while let Token::Identifier(id) = next_token!(tokens) {
-        args.push(id);
-        match next_token!(tokens) {
-            Token::ClosedParen => break,
-            Token::Comma       => {},
-            other              => return unexpected_token(other, &[")", ","]),
-        }
-    }
-    Ok(args)
 }
 
 #[test]
