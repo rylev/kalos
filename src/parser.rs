@@ -68,6 +68,7 @@ impl<'a> Function<'a> {
 #[derive(PartialEq, Clone, Debug)]
 pub enum Expression<'a> {
     Value(f64),
+    Negate(Box<Expression<'a>>),
     Add(Box<Expression<'a>>, Box<Expression<'a>>),
     Subtract(Box<Expression<'a>>, Box<Expression<'a>>),
     Multiply(Box<Expression<'a>>, Box<Expression<'a>>),
@@ -157,10 +158,15 @@ fn parse_primary<'a>(tokens: &mut Vec<Token<'a>>) -> ParseResult<Expression<'a>>
         Token::Number(n) => parse_number_expression(tokens, n),
         Token::OpenParen => parse_paren_expression(tokens),
         Token::Identifier(name) => parse_identifier_expression(tokens, name),
+        Token::Operator(Operator::Subtraction) => parse_negation(tokens),
         other => unexpected_token(other, &["number", "(", "identifier"])
     }
 }
 
+fn parse_negation<'a>(tokens: &mut Vec<Token<'a>>) -> ParseResult<Expression<'a>> {
+    let expression = try_parse!(parse_expression(tokens));
+    Ok(Expression::Negate(Box::new(expression)))
+}
 
 fn parse_number_expression<'a>(_tokens: &mut Vec<Token<'a>>, n: f64) -> ParseResult<Expression<'a>> {
     Ok(Expression::Value(n))
