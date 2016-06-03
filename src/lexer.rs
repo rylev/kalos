@@ -58,7 +58,7 @@ impl PartialOrd<Precedence> for Precedence {
 }
 
 
-named!(def<Token>, map!(chain!(tag!("def") ~ space, || ()), |_| Token::Def));
+named!(def<Token>, chain!(tag!("def") ~ space, || Token::Def));
 named!(delimiter<Token>, map!(char!(';'), |_| Token::Delimiter));
 named!(open_paren<Token>, map!(char!('('), |_| Token::OpenParen));
 named!(closed_paren<Token>, map!(char!(')'), |_| Token::ClosedParen));
