@@ -6,8 +6,6 @@ mod parser;
 mod ast;
 mod llvm;
 
-pub use parser::parse;
-
 use std::iter::repeat;
 
 use llvm_sys::prelude::LLVMValueRef;
@@ -69,24 +67,31 @@ impl<'a> IRBuilder for ast::Function<'a> {
 }
 
 impl<'a> IRBuilder for ast::Expression<'a> {
-    fn codegen(&self, _context_provider: &mut ContextProvider, _module: &mut Module) -> IRResult {
+    fn codegen(&self, context_provider: &mut ContextProvider, module: &mut Module) -> IRResult {
         match self {
             &ast::Expression::Value(value) => {
                 let typ = RealType::double();
                 Ok(RealConst::new(&typ, value).to_ref())
+            }
+            &ast::Expression::Add(ref lhs, ref rhs) => {
+                let lhs = try!(lhs.codegen(context_provider, module));
+                let rhs = try!(rhs.codegen(context_provider, module));
+                Ok(context_provider.builder.build_fadd(lhs, rhs, "addtmp"))
+            }
+            &ast::Expression::Subtract(ref lhs, ref rhs) => {
+                let lhs = try!(lhs.codegen(context_provider, module));
+                let rhs = try!(rhs.codegen(context_provider, module));
+                Ok(context_provider.builder.build_fsub(lhs, rhs, "subtmp"))
             }
             _ => panic!("Unknown expression")
         }
     }
 }
 
-#[test]
-fn foo() {
-    let function = ast::Function::new("foo", vec!("bar", "baz"), ast::Expression::Value(1.0));
+fn main() {
+    let ast = parser::parse("def foo(boo, baz) { 1 + 1 - 1 }").unwrap();
     let mut context_provider = ContextProvider::new();
     let mut module = Module::new();
-    let result = function.codegen(&mut context_provider, &mut module);
-    println!("{:?}", result);
+    let _ = ast.codegen(&mut context_provider, &mut module).unwrap();
     module.dump();
-    panic!("")
 }

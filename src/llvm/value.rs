@@ -17,9 +17,7 @@ pub struct Function {
 impl Function {
     pub fn new(module: &mut Module, name: &str, typ: &FunctionType) -> Self {
         let name = CString::new(name).unwrap();
-        let reference = unsafe {
-            LLVMAddFunction(module.to_ref(), name.as_ptr() as *const c_char, typ.to_ref())
-        };
+        let reference = unsafe { LLVMAddFunction(module.to_ref(), name.as_ptr() as *const c_char, typ.to_ref()) };
 
         Self::from_ref(reference)
     }
