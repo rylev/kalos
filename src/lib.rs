@@ -14,6 +14,7 @@ use std::iter;
 use std::os::raw::c_uint;
 use std::os::raw::c_char;
 
+#[derive(Debug)]
 pub enum CodeGenError {
     Wtf
 }
@@ -42,7 +43,7 @@ impl<'a> IRBuilder for ast::AstNode<'a> {
 
 impl<'a> IRBuilder for ast::Function<'a> {
     fn codegen(&self, context_provider: &mut ContextProvider, module: &mut Module) -> IRResult {
-        let function = match module.get_function_by_name(&self.name()) {
+        let mut function = match module.get_function_by_name(&self.name()) {
             Some(func) => return Err(CodeGenError::Wtf), // handle redefinition
             None => {
                 // function type is defined by number and types of the arguments
@@ -54,7 +55,28 @@ impl<'a> IRBuilder for ast::Function<'a> {
         };
 
         //TODO: set param names
-        (Ok(function.to_ref()))
+        let mut basic_block = function.append_basic_block_in_context(&mut context_provider.context, "entry");
+        context_provider.builder.position_at_end(&mut basic_block);
+
+        // TODO: Set function params in named values
+        let end_expression = self.body().last().unwrap();
+        let end = try!(end_expression.codegen(context_provider, module));
+
+        context_provider.builder.build_ret(end);
+
+        Ok(function.to_ref())
+    }
+}
+impl<'a> IRBuilder for ast::Expression<'a> {
+    fn codegen(&self, context_provider: &mut ContextProvider, module: &mut Module) -> IRResult {
+        match self {
+            &ast::Expression::Value(value) => {
+                let typ = RealType::double();
+                Ok(RealConst::new(&typ, value).to_ref())
+            }
+            _ => panic!("Unknown expression")
+
+        }
     }
 }
 
@@ -107,6 +129,10 @@ impl Context {
             global: true
         }
     }
+
+    fn to_ref(&self) -> LLVMContextRef {
+        self.reference
+    }
 }
 
 impl Drop for Context {
@@ -130,13 +156,26 @@ impl Builder {
             reference: reference
         }
     }
+
+    pub fn position_at_end(&mut self, block: &mut BasicBlock) {
+        unsafe { LLVMPositionBuilderAtEnd(self.to_ref(), block.to_ref()) }
+    }
+
+    pub fn build_ret(&self, value: LLVMValueRef) -> LLVMValueRef {
+        unsafe { LLVMBuildRet(self.to_ref(), value) }
+    }
+
+    fn to_ref(&self) -> LLVMBuilderRef {
+        self.reference
+    }
 }
+
 pub struct Module {
     reference: LLVMModuleRef
 }
 
 impl Module {
-    pub fn new(name: &str) -> Self {
+    pub fn new() -> Self {
         unsafe {
             Module { reference: LLVMModuleCreateWithName(c_str!("hello")) }
         }
@@ -148,7 +187,7 @@ impl Module {
             LLVMGetNamedFunction(self.reference, name.as_ptr() as *const i8)
         };
         if !function.is_null() {
-            unsafe { Some(Function::from_ref(function)) }
+            Some(Function::from_ref(function))
         } else {
             None
         }
@@ -170,6 +209,20 @@ impl std::ops::Drop for Module {
     }
 }
 
+pub struct BasicBlock {
+    reference: LLVMBasicBlockRef
+}
+
+impl BasicBlock {
+    fn from_ref(reference: LLVMBasicBlockRef) -> Self {
+        BasicBlock { reference: reference }
+    }
+
+    fn to_ref(&self) -> LLVMBasicBlockRef {
+        self.reference
+    }
+}
+
 struct Function {
     reference: LLVMValueRef
 }
@@ -188,6 +241,32 @@ impl Function {
         Function { reference: reference }
     }
 
+    fn to_ref(&self) -> LLVMValueRef {
+        self.reference
+    }
+
+    fn append_basic_block_in_context(&mut self, context: &mut Context, name: &str) -> BasicBlock {
+        let name = CString::new(name).unwrap();
+        let reference = unsafe {
+            LLVMAppendBasicBlockInContext(context.to_ref(), self.to_ref(), name.as_ptr() as *const c_char)
+        };
+        BasicBlock::from_ref(reference)
+    }
+}
+
+struct RealConst {
+    reference: LLVMValueRef
+}
+
+impl RealConst {
+    fn new(typ: &RealType, value: f64) -> Self {
+        let reference = unsafe { LLVMConstReal(typ.to_ref(), value) };
+        Self::from_ref(reference)
+    }
+
+    fn from_ref(reference: LLVMValueRef) -> Self {
+        RealConst { reference: reference }
+    }
     fn to_ref(&self) -> LLVMValueRef {
         self.reference
     }
@@ -248,4 +327,15 @@ impl Type for RealType {
     fn to_ref(&self) -> LLVMTypeRef {
         self.reference
     }
+}
+
+#[test]
+fn foo() {
+    let function = ast::Function::new("foo", vec!("bar", "baz"), ast::Expression::Value(1.0));
+    let mut context_provider = ContextProvider::new();
+    let mut module = Module::new();
+    let result = function.codegen(&mut context_provider, &mut module);
+    println!("{:?}", result);
+    module.dump();
+    panic!("")
 }

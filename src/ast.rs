@@ -19,28 +19,39 @@ pub enum AstNode<'a> {
 }
 
 #[derive(PartialEq, Clone, Debug)]
-pub struct Prototype<'a>  {
+struct Prototype<'a>  {
     name: &'a str,
     args: Vec<&'a str>
 }
 
 impl<'a> Prototype<'a> {
-    pub fn new(name: &'a str, args: Vec<&'a str>) -> Prototype<'a> {
+    fn new(name: &'a str, args: Vec<&'a str>) -> Self {
         Prototype{name: name, args: args}
     }
 }
 
 #[derive(PartialEq, Clone, Debug)]
+pub struct FunctionBody<'a> {
+    expressions: Vec<Expression<'a>> // TODO: make a vec
+}
+
+impl<'a> FunctionBody<'a> {
+    fn new(expressions: Vec<Expression<'a>>) -> Self {
+        FunctionBody { expressions: expressions }
+    }
+}
+
+#[derive(PartialEq, Clone, Debug)]
 pub struct Function<'a> {
-    prototype: Box<Prototype<'a>>,
-    body: Box<Expression<'a>>
+    prototype: Prototype<'a>,
+    body: FunctionBody<'a>
 }
 
 impl<'a> Function<'a> {
-    pub fn new(name: &'a str, args: Vec<&'a str>, body: Expression<'a>) -> Function<'a> {
+    pub fn new(name: &'a str, args: Vec<&'a str>, body: Expression<'a>) -> Self {
         Function {
-            prototype: Box::new(Prototype::new(name, args)),
-            body: Box::new(body)
+            prototype: Prototype::new(name, args),
+            body: FunctionBody::new(vec!(body)),
         }
     }
 
@@ -52,8 +63,8 @@ impl<'a> Function<'a> {
         &self.prototype.args
     }
 
-    pub fn body(&self) -> &Expression<'a> {
-        self.body.as_ref()
+    pub fn body(&self) -> &Vec<Expression<'a>> {
+        &self.body.expressions
     }
 }
 
