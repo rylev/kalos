@@ -96,11 +96,26 @@ impl<'a> IRBuilder for ast::Expression<'a> {
                 let rhs = try!(rhs.codegen(context_provider, module));
                 Ok(context_provider.builder.build_fsub(lhs, rhs, "subtmp"))
             }
+            &ast::Expression::Multiply(ref lhs, ref rhs) => {
+                let lhs = try!(lhs.codegen(context_provider, module));
+                let rhs = try!(rhs.codegen(context_provider, module));
+                Ok(context_provider.builder.build_fmul(lhs, rhs, "multmp"))
+            }
+            &ast::Expression::Divide(ref lhs, ref rhs) => {
+                let lhs = try!(lhs.codegen(context_provider, module));
+                let rhs = try!(rhs.codegen(context_provider, module));
+                Ok(context_provider.builder.build_fdiv(lhs, rhs, "divtmp"))
+            }
             &ast::Expression::Variable(name) => {
                 match context_provider.named_values.get(name) {
                     Some(value) => Ok(*value),
                     None        => Err(CodeGenError::UnresolvedName(name.to_owned()))
                 }
+            }
+            &ast::Expression::Negate(ref expression) => {
+                let value = try!(expression.codegen(context_provider, module));
+                Ok(context_provider.builder.build_neg(value, "negtmp"))
+
             }
             _ => panic!("Unknown expression")
         }
@@ -108,7 +123,7 @@ impl<'a> IRBuilder for ast::Expression<'a> {
 }
 
 fn main() {
-    let ast = parser::parse("def foo(boo, baz) { boo + 1 - 1 }").unwrap();
+    let ast = parser::parse("def foo(boo, baz) { boo / -1 * baz }").unwrap();
     let mut context_provider = ContextProvider::new();
     let mut module = Module::new();
     let _ = ast.codegen(&mut context_provider, &mut module).unwrap();

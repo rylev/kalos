@@ -34,6 +34,21 @@ impl Builder {
         unsafe { LLVMBuildFSub(self.to_ref(), lhs, rhs, name.as_ptr() as *const c_char) }
     }
 
+    pub fn build_fmul(&mut self, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &str) -> LLVMValueRef {
+        let name = CString::new(name).unwrap();
+        unsafe { LLVMBuildFMul(self.to_ref(), lhs, rhs, name.as_ptr() as *const c_char) }
+    }
+
+    pub fn build_fdiv(&mut self, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &str) -> LLVMValueRef {
+        let name = CString::new(name).unwrap();
+        unsafe { LLVMBuildFDiv(self.to_ref(), lhs, rhs, name.as_ptr() as *const c_char) }
+    }
+
+    pub fn build_neg(&mut self, value: LLVMValueRef, name: &str) -> LLVMValueRef {
+        let name = CString::new(name).unwrap();
+        unsafe { LLVMBuildNeg(self.to_ref(), value, name.as_ptr() as *const c_char) }
+    }
+
     pub fn build_ret(&self, value: LLVMValueRef) -> LLVMValueRef {
         unsafe { LLVMBuildRet(self.to_ref(), value) }
     }
