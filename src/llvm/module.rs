@@ -6,20 +6,15 @@ use llvm_sys::prelude::LLVMModuleRef;
 
 use super::value::Function;
 
-macro_rules! c_str {
-    ($s:expr) => {{
-        concat!($s, "\0").as_ptr() as *const i8
-    }}
-}
-
 pub struct Module {
     reference: LLVMModuleRef
 }
 
 impl Module {
-    pub fn new() -> Self {
+    pub fn new(name: &str) -> Self {
+        let name = CString::new(name).unwrap();
         unsafe {
-            Module { reference: LLVMModuleCreateWithName(c_str!("hello")) }
+            Module { reference: LLVMModuleCreateWithName(name.as_ptr() as *const i8) }
         }
     }
 

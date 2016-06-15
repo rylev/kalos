@@ -145,7 +145,7 @@ impl<'a> IRBuilder for ast::Expression<'a> {
 fn main() {
     let ast = parser::parse("def foo(boo, baz) { boo / foo(1, 2) * baz }").unwrap();
     let mut context_provider = ContextProvider::new();
-    let mut module = Module::new();
+    let mut module = Module::new("main");
     let _ = ast.codegen(&mut context_provider, &mut module).unwrap();
     module.dump();
 }
