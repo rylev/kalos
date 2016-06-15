@@ -14,7 +14,9 @@ use llvm::*;
 
 #[derive(Debug)]
 pub enum CodeGenError {
-    Wtf
+    UnresolvedName(String),
+    AlreadyDefinedFunction(String),
+    Wtf //TODO: get rid of this "catch all" error
 }
 pub type IRResult = Result<LLVMValueRef, CodeGenError>;
 pub trait IRBuilder {
@@ -41,19 +43,27 @@ impl<'a> IRBuilder for ast::AstNode<'a> {
 
 impl<'a> IRBuilder for ast::Function<'a> {
     fn codegen(&self, context_provider: &mut ContextProvider, module: &mut Module) -> IRResult {
-        let mut function = match module.get_function_by_name(&self.name()) {
-            Some(_) => return Err(CodeGenError::Wtf), // handle redefinition
+        // Start with a fresh context
+        context_provider.named_values.clear();
+
+        let mut function_value = match module.get_function_by_name(&self.name()) {
+            Some(_) => return Err(CodeGenError::AlreadyDefinedFunction(self.name().to_owned())),
             None => {
                 // function type is defined by number and types of the arguments
                 let float_type = RealType::double();
                 let mut param_types : Vec<RealType> = repeat(float_type).take(self.args().len()).collect();
-                let function_type = FunctionType::new(&mut param_types, &float_type, false);
+                let return_type = float_type;
+                let function_type = FunctionType::new(&mut param_types, &return_type, ArgsLengthType::FixedLength);
                 Function::new(module, &self.name(), &function_type)
             }
         };
 
-        //TODO: set param names
-        let mut basic_block = function.append_basic_block_in_context(&mut context_provider.context, "entry");
+        for (&arg, parameter) in self.args().iter().zip(function_value.params()) {
+
+            parameter.set_name(arg);
+            context_provider.named_values.insert(arg.to_owned(), parameter.to_ref());
+        }
+        let mut basic_block = function_value.append_basic_block_in_context(&mut context_provider.context, "entry");
         context_provider.builder.position_at_end(&mut basic_block);
 
         // TODO: Set function params in named values
@@ -62,7 +72,10 @@ impl<'a> IRBuilder for ast::Function<'a> {
 
         context_provider.builder.build_ret(end);
 
-        Ok(function.to_ref())
+        // Variables local to the function are cleared
+        context_provider.named_values.clear();
+
+        Ok(function_value.to_ref())
     }
 }
 
@@ -83,13 +96,19 @@ impl<'a> IRBuilder for ast::Expression<'a> {
                 let rhs = try!(rhs.codegen(context_provider, module));
                 Ok(context_provider.builder.build_fsub(lhs, rhs, "subtmp"))
             }
+            &ast::Expression::Variable(name) => {
+                match context_provider.named_values.get(name) {
+                    Some(value) => Ok(*value),
+                    None        => Err(CodeGenError::UnresolvedName(name.to_owned()))
+                }
+            }
             _ => panic!("Unknown expression")
         }
     }
 }
 
 fn main() {
-    let ast = parser::parse("def foo(boo, baz) { 1 + 1 - 1 }").unwrap();
+    let ast = parser::parse("def foo(boo, baz) { boo + 1 - 1 }").unwrap();
     let mut context_provider = ContextProvider::new();
     let mut module = Module::new();
     let _ = ast.codegen(&mut context_provider, &mut module).unwrap();

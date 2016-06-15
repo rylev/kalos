@@ -7,7 +7,7 @@ use std::collections::HashMap;
 pub struct ContextProvider {
     pub context: Context,
     pub builder: Builder,
-    named_values: HashMap<String, LLVMValueRef>
+    pub named_values: HashMap<String, LLVMValueRef>
 }
 
 impl ContextProvider {
