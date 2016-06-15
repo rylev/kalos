@@ -146,6 +146,9 @@ fn main() {
     let ast = parser::parse("def foo(boo, baz) { boo / foo(1, 2) * baz }").unwrap();
     let mut context_provider = ContextProvider::new();
     let mut module = Module::new("main");
+
     let _ = ast.codegen(&mut context_provider, &mut module).unwrap();
+    let target_machine = TargetMachine::new().unwrap();
+    let _ = target_machine.emit_to_file(&module, "test.bc");
     module.dump();
 }
