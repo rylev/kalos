@@ -16,6 +16,8 @@ use llvm::*;
 pub enum CodeGenError {
     UnresolvedName(String),
     AlreadyDefinedFunction(String),
+    UnresolvedFunction(String),
+    WrongArity(usize, usize),
     Wtf //TODO: get rid of this "catch all" error
 }
 pub type IRResult = Result<LLVMValueRef, CodeGenError>;
@@ -117,13 +119,31 @@ impl<'a> IRBuilder for ast::Expression<'a> {
                 Ok(context_provider.builder.build_neg(value, "negtmp"))
 
             }
-            _ => panic!("Unknown expression")
+            &ast::Expression::FunctionCall(name, ref args) => {
+                let function = match module.get_function_by_name(name) {
+                    Some(function) => function,
+                    None => return Err(CodeGenError::UnresolvedFunction(name.to_owned()))
+                };
+
+                let num_params = function.count_params() as usize;
+                let num_args = args.len();
+                if num_params != num_args {
+                    return Err(CodeGenError::WrongArity(num_params, num_args))
+                }
+
+                let mut arg_values = Vec::new();
+                for arg in args.iter() {
+                    arg_values.push(try!(arg.codegen(context_provider, module)));
+                }
+
+                Ok(context_provider.builder.build_call(function.to_ref(), arg_values.as_mut_slice(), "calltmp"))
+            }
         }
     }
 }
 
 fn main() {
-    let ast = parser::parse("def foo(boo, baz) { boo / -1 * baz }").unwrap();
+    let ast = parser::parse("def foo(boo, baz) { boo / foo(1, 2) * baz }").unwrap();
     let mut context_provider = ContextProvider::new();
     let mut module = Module::new();
     let _ = ast.codegen(&mut context_provider, &mut module).unwrap();

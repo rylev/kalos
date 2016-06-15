@@ -59,6 +59,7 @@ impl<'a> Function<'a> {
         self.prototype.name
     }
 
+    // TODO: rename to params
     pub fn args(&self) -> &Vec<&'a str> {
         &self.prototype.args
     }

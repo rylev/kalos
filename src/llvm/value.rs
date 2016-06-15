@@ -41,6 +41,10 @@ impl Function {
     pub fn params(&self) -> ParamsIter {
         ParamsIter::new(self)
     }
+
+    pub fn count_params(&self) -> u32 {
+        unsafe { LLVMCountParams(self.to_ref()) }
+    }
 }
 
 pub struct RealConst {
