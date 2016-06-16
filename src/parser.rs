@@ -1,5 +1,6 @@
 use lexer;
 use lexer::{Token,Operator,Precedence};
+use ast::*;
 
 #[macro_export]
 macro_rules! try_parse {
@@ -33,50 +34,6 @@ macro_rules! assert_next_token {
     })
 }
 
-#[derive(PartialEq, Clone, Debug)]
-pub enum ASTNode<'a> {
-    FuncDeclartion(Function<'a>)
-}
-
-#[derive(PartialEq, Clone, Debug)]
-pub struct Prototype<'a>  {
-    name: &'a str,
-    args: Vec<&'a str>
-}
-
-impl<'a> Prototype<'a> {
-    fn new(name: &'a str, args: Vec<&'a str>) -> Prototype<'a> {
-        Prototype{name: name, args: args}
-    }
-}
-
-#[derive(PartialEq, Clone, Debug)]
-pub struct Function<'a> {
-    prototype: Box<Prototype<'a>>,
-    body: Box<Expression<'a>>
-}
-
-impl<'a> Function<'a> {
-    fn new(name: &'a str, args: Vec<&'a str>, body: Expression<'a>) -> Function<'a> {
-        Function {
-            prototype: Box::new(Prototype::new(name, args)),
-            body: Box::new(body)
-        }
-    }
-}
-
-#[derive(PartialEq, Clone, Debug)]
-pub enum Expression<'a> {
-    Value(f64),
-    Negate(Box<Expression<'a>>),
-    Add(Box<Expression<'a>>, Box<Expression<'a>>),
-    Subtract(Box<Expression<'a>>, Box<Expression<'a>>),
-    Multiply(Box<Expression<'a>>, Box<Expression<'a>>),
-    Divide(Box<Expression<'a>>, Box<Expression<'a>>),
-    Variable(&'a str),
-    FunctionCall(&'a str, Vec<Expression<'a>>)
-}
-
 pub type ParseResult<T> = Result<T, ParserError>;
 
 #[derive(PartialEq, Debug)]
@@ -85,7 +42,7 @@ pub enum ParserError {
     UnexpectedEndOfInput,
 }
 
-pub fn parse<'a>(input: &'a str) -> ParseResult<Vec<ASTNode>> {
+pub fn parse<'a>(input: &'a str) -> ParseResult<Ast> {
     match lexer::tokenize(input) {
         Ok(mut tokens) => {
             tokens.reverse();
@@ -93,12 +50,12 @@ pub fn parse<'a>(input: &'a str) -> ParseResult<Vec<ASTNode>> {
             let mut nodes = vec!();
             loop  {
                 let func = try_parse!(parse_function_definition(&mut tokens));
-                nodes.push(ASTNode::FuncDeclartion(func));
+                nodes.push(AstNode::FuncDeclartion(func));
                 if tokens.is_empty() {
                     break
                 }
             }
-            Ok(nodes)
+            Ok(Ast::new(nodes))
         }
         Err(_) => Err(ParserError::UnexpectedEndOfInput) // FIX ME
     }
