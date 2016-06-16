@@ -148,7 +148,9 @@ fn main() {
     let mut module = Module::new("main");
 
     let _ = ast.codegen(&mut context_provider, &mut module).unwrap();
+
+    module.verify();
     let target_machine = TargetMachine::new().unwrap();
-    let _ = target_machine.emit_to_file(&module, "test.bc");
+    target_machine.emit_to_file(&module, "test.bc").unwrap();
     module.dump();
 }

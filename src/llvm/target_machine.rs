@@ -6,7 +6,6 @@ use std::ops::Drop;
 use std::os::raw::c_char;
 use std::ffi::CStr;
 use std::ffi::CString;
-use std::ptr;
 use std::mem;
 
 #[derive(Debug)]
@@ -37,9 +36,10 @@ fn get_default_target_triple<'a>() -> &'a str {
 fn get_target_from_triple(triple: &str) -> LLVMTargetRef {
     // TODO: handle error
     unsafe {
-        let mut target = mem::uninitialized();
 
-        LLVMGetTargetFromTriple(CString::new(triple).unwrap().as_ptr() as *const i8, &mut target, ptr::null_mut());
+        let mut target = mem::uninitialized();
+        let mut error = mem::uninitialized();
+        LLVMGetTargetFromTriple(CString::new(triple).unwrap().as_ptr() as *const i8, &mut target, error);
 
         target
     }
@@ -77,11 +77,11 @@ impl TargetMachine {
         Ok(target_machine)
     }
 
-    pub fn emit_to_file(&self, module: &Module, output: &str) -> Result<(), String> {
-        let output = CString::new(output.to_owned()).unwrap();
+    pub fn emit_to_file(&self, module: &Module, path: &str) -> Result<(), String> {
+        let path = CString::new(path).unwrap();
         unsafe {
             let mut error = mem::uninitialized();
-            if LLVMTargetMachineEmitToFile(self.reference, module.to_ref(), output.as_ptr() as *mut c_char, LLVMCodeGenFileType::LLVMObjectFile, &mut error) == 0 {
+            if LLVMTargetMachineEmitToFile(self.reference, module.to_ref(), path.as_ptr() as *mut c_char, LLVMCodeGenFileType::LLVMObjectFile, &mut error) == 0 {
                 Ok(())
             } else {
                 Err(CStr::from_ptr(error).to_string_lossy().into_owned())

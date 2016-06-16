@@ -1,8 +1,10 @@
 use std::ffi::CString;
 use std::ops::Drop;
+use std::mem;
 
 use llvm_sys::core::*;
 use llvm_sys::prelude::LLVMModuleRef;
+use llvm_sys::analysis::*;
 
 use super::value::Function;
 
@@ -32,6 +34,14 @@ impl Module {
 
     pub fn to_ref(&self) -> LLVMModuleRef {
         self.reference
+    }
+
+    pub fn verify(&self) {
+        unsafe {
+            let mut error = mem::uninitialized();
+            LLVMVerifyModule(self.to_ref(), LLVMVerifierFailureAction::LLVMAbortProcessAction, &mut error);
+            LLVMDisposeMessage(error);
+        }
     }
 
     // Print module to stdout
